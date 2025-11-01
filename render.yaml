@@ -15,10 +15,10 @@ services:
         value: "1.0.0"
       # Allow ONLY your frontend origins in production. For initial testing, set CORS_ALLOW_ALL=true
       - key: CORS_ORIGINS
-        value: "https://YOUR-VERCEL-DOMAIN.vercel.app"
+        value: "https://aurion-ten.vercel.app"
       # Enable this to allow *.vercel.app preview domains
       - key: CORS_ALLOW_VERCEL_PREVIEWS
-        value: "true"
+        value: "false"
       # ==== REQUIRED SECRETS (set real values in Render dashboard) ====
       - key: SECRET_KEY
         generateValue: true
