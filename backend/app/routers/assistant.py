@@ -207,7 +207,7 @@ async def assistant_query(body: QueryBody, current_user: dict = Depends(get_curr
     is_weather = intent == "weather"
     is_news = intent == "news"
     if ("news" in low and "weather" in low) or (is_weather and is_news):
-        # Weather first, then news
+        # Fetch weather and news in parallel for lower latency
         city, date = _extract_city_and_date(text)
         if not city:
             return {
@@ -215,13 +215,15 @@ async def assistant_query(body: QueryBody, current_user: dict = Depends(get_curr
                 "reply": "Which city should I check the weather for?",
             }
         date_norm = _normalize_natural_date(text) or date
-        w = await get_weather(city, date_norm)
+        topic, country = _extract_topic_and_country(text)
+        import asyncio as _asyncio
+        weather_task = get_weather(city, date_norm)
+        news_task = get_news(topic, country, session_key=user_id)
+        w, n = await _asyncio.gather(weather_task, news_task, return_exceptions=False)
         weather_part = (
             _format_weather_reply(w["data"], (date or "today").lower()) if w.get("ok") and w.get("data") else
             "I couldn’t fetch weather data right now — please check the city name or try again shortly."
         )
-        topic, country = _extract_topic_and_country(text)
-        n = await get_news(topic, country, session_key=user_id)
         news_part = (
             _format_news_reply(n["data"]) if n.get("ok") and n.get("data") else
             "I’m having trouble connecting to the news source right now. Please try again later."

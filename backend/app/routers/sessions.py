@@ -13,9 +13,12 @@ import pytz
 from app.database import get_sessions_collection, get_user_profile_collection, get_tasks_collection
 from app.security import get_current_active_user
 from app.services import ai_service, nlu, redis_cache
+from app.services import redis_service
 from app.services.response_shaper import format_structured_reply
 from app.services import memory_store  # For fast redis-backed history when available
 from app.services.memory_coordinator import gather_memory_context, post_message_update
+import os
+import asyncio
 from app.celery_worker import celery_app
 
 logger = logging.getLogger(__name__)
@@ -25,6 +28,65 @@ router = APIRouter(
     tags=["Sessions"],
     dependencies=[Depends(get_current_active_user)]
 )
+
+# ---- Local latency budgets (seconds) ----
+CONTEXT_TIMEOUT_S = float(os.getenv("CHAT_CONTEXT_TIMEOUT_S", "0.8"))
+try:
+    from app.config import settings as _settings
+    AI_TIMEOUT_S = float(os.getenv("CHAT_AI_TIMEOUT_S", str(getattr(_settings, "AI_TIMEOUT", 2.2))))
+except Exception:
+    AI_TIMEOUT_S = float(os.getenv("CHAT_AI_TIMEOUT_S", "2.2"))
+
+async def _safe_gather_context(*, user_id: str, user_key: str, session_id: str, latest_user_message: str, recent_messages: list[Any] | None) -> dict:
+    """Gather memory context with a strict timeout and resilient fallback."""
+    try:
+        return await asyncio.wait_for(
+            gather_memory_context(
+                user_id=user_id,
+                user_key=user_key,
+                session_id=session_id,
+                latest_user_message=latest_user_message,
+                recent_messages=recent_messages or [],
+            ),
+            timeout=CONTEXT_TIMEOUT_S,
+        )
+    except Exception:
+        try:
+            logger.warning("gather_memory_context timed out/failed; using minimal context")
+        except Exception:
+            pass
+        return {
+            "history": [],
+            "state": "general_conversation",
+            "pinecone_context": None,
+            "neo4j_facts": None,
+            "profile": {},
+            "user_facts_semantic": None,
+            "persistent_memories": None,
+        }
+
+async def _safe_ai_response(*, prompt: str, history: list[dict] | None, state: str | None, pinecone_context: str | None, neo4j_facts: str | None, profile: dict | None, user_facts_semantic: list[str] | None, persistent_memories: list[dict] | None, session_id: str | None) -> str:
+    """Call AI with a strict timeout; return a friendly fallback on timeout/failure."""
+    try:
+        return await asyncio.wait_for(
+            ai_service.get_response(
+                prompt=prompt,
+                history=history,
+                state=state or "general_conversation",
+                pinecone_context=pinecone_context,
+                neo4j_facts=neo4j_facts,
+                profile=profile,
+                user_facts_semantic=user_facts_semantic,
+                persistent_memories=persistent_memories,
+                session_id=session_id,
+            ),
+            timeout=AI_TIMEOUT_S,
+        )
+    except Exception:
+        return (
+            "I'm having trouble answering quickly right now. "
+            "Here's a short reply; you can retry for more details."
+        )
 
 # -----------------------------
 # Models
@@ -564,6 +626,70 @@ async def send_message(session_id: str,
     except Exception:
         logger.debug("Title auto-gen failed", exc_info=True)
 
+    # Fast-path: YouTube video intent (autoplay) — reuse chat router logic when present
+    try:
+        lower_msg = (chat_req.message or "").lower().strip()
+        vi = None
+        # Hard guard: skip if it's clearly a reminder flow
+        if "remind me" not in lower_msg and "reminder" not in lower_msg:
+            # Import lazily to avoid circular import at module load time
+            try:
+                from app.routers.chat import _maybe_handle_video_intent  # type: ignore
+            except Exception:
+                _maybe_handle_video_intent = None  # type: ignore
+            if _maybe_handle_video_intent is not None:
+                vi = await _maybe_handle_video_intent(chat_req.message)
+        if vi and vi.get("handled"):
+            # Shape assistant reply minimally and persist both messages to session
+            resp_txt = vi.get("response_text") or ""
+            try:
+                shaped_text = format_structured_reply(
+                    user_message=chat_req.message,
+                    main_text=resp_txt,
+                    profile=user_profile_doc,
+                    short_context={
+                        "last_topic": session.get("title") if isinstance(session.get("title"), str) else None,
+                    },
+                )
+            except Exception:
+                shaped_text = resp_txt
+            ai_message = {"sender": "assistant", "text": shaped_text, "timestamp": datetime.utcnow()}
+            update_filter = {"_id": ObjectId(session_id), "$or": [{"userId": current_user["_id"]}]}
+            if isinstance(current_user["_id"], str) and ObjectId.is_valid(current_user["_id"]):
+                update_filter["$or"].append({"userId": ObjectId(current_user["_id"])})
+            try:
+                sessions_collection.update_one(
+                    update_filter,
+                    {
+                        "$push": {"messages": {"$each": [user_message_doc, ai_message]}},
+                        "$set": {"updatedAt": datetime.utcnow(), "lastMessageAt": datetime.utcnow(), "lastMessage": shaped_text[:200]},
+                        "$inc": {"messageCount": 2},
+                    },
+                )
+            except Exception:
+                logger.exception("Failed to persist video chat messages for session %s", session_id)
+            # Remember current video for session (controls may use this)
+            try:
+                best = vi.get("video") or {}
+                if best.get("videoId"):
+                    await redis_service.set_prefetched_data(f"session:video:{session_id}", best, ttl_seconds=24 * 3600)
+            except Exception:
+                pass
+            # Post-processing hooks
+            try:
+                post_message_update(user_id=user_id_str, user_key=user_email, session_id=session_id, user_message=chat_req.message, ai_message=shaped_text, state=None)
+            except Exception:
+                logger.debug("post_message_update failed (video path)", exc_info=True)
+            # Return structured response compatible with chatService normalization
+            return {
+                "response_text": shaped_text,
+                "video": vi.get("video"),
+                "video_intent": vi.get("video_intent"),
+            }
+    except Exception:
+        # Non-fatal; fall through to normal flow
+        pass
+
     # Check for an active reminder draft first (multi-turn slot filling)
     try:
         draft = await _get_reminder_draft(session_id)
@@ -906,7 +1032,7 @@ async def send_message(session_id: str,
 
     else:
         # Default: handle as general chat — gather context and ask ai_service
-        memory_ctx = await gather_memory_context(
+        memory_ctx = await _safe_gather_context(
             user_id=user_id_str,
             user_key=user_email,
             session_id=session_id,
@@ -922,7 +1048,7 @@ async def send_message(session_id: str,
                 history_for_prompt.append({"sender": m["sender"], "text": m["text"]})
         if "user_id" not in user_profile_doc and current_user.get("_id"):
             user_profile_doc["user_id"] = user_id_str
-        ai_response_text = await ai_service.get_response(
+        ai_response_text = await _safe_ai_response(
             prompt=chat_req.message,
             history=history_for_prompt,
             pinecone_context=memory_ctx.get("pinecone_context"),
@@ -930,6 +1056,8 @@ async def send_message(session_id: str,
             state=None,
             profile=user_profile_doc,
             session_id=str(session_id),
+            user_facts_semantic=memory_ctx.get("user_facts_semantic"),
+            persistent_memories=memory_ctx.get("persistent_memories"),
         )
 
     # Persist messages and post update hooks

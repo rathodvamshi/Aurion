@@ -474,7 +474,7 @@ const ChatWindow = ({ chatId, onToggleSidebar }) => {
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               dayKey: new Date().toISOString().slice(0,10),
               dayLabel: 'Today',
-              youtube: { videoId: v.videoId, title: v.title }
+              youtube: { videoId: v.videoId, title: v.title, autoplay: true }
             };
             setMessages((prev) => [...prev, ytMsg]);
           }
@@ -516,7 +516,7 @@ const ChatWindow = ({ chatId, onToggleSidebar }) => {
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               dayKey: new Date().toISOString().slice(0,10),
               dayLabel: 'Today',
-              youtube: { videoId: v.videoId, title: v.title }
+              youtube: { videoId: v.videoId, title: v.title, autoplay: true }
             };
             setMessages((prev) => [...prev, ytMsg]);
           }
@@ -670,7 +670,7 @@ const ChatWindow = ({ chatId, onToggleSidebar }) => {
 
       <div className="chat-header chat-header--compact">
         <div className="chat-header-left">
-          <h1 className="chat-title">MAYA</h1>
+          <h1 className="chat-title">Aurion</h1>
         </div>
         <button className="share-icon-btn" aria-label="Share conversation" title="Share">
           <Share2 size={18} />
@@ -680,8 +680,8 @@ const ChatWindow = ({ chatId, onToggleSidebar }) => {
       <div className="chat-messages" role="log" aria-live="polite" aria-relevant="additions" ref={messagesContainerRef}>
         {messages.length === 0 ? (
           <div className="welcome-screen">
-            <div className="welcome-logo">M</div>
-            <h1 className="welcome-title">Welcome to MAYA</h1>
+            <div className="welcome-logo">A</div>
+            <h1 className="welcome-title">Welcome to Aurion</h1>
             <p className="welcome-quote">"{quote}"</p>
             <p className="welcome-subtitle">Start a conversation to begin your journey</p>
           </div>
@@ -744,7 +744,7 @@ const ChatWindow = ({ chatId, onToggleSidebar }) => {
                     )}
                     {videoId ? (
                       <div className="video-embed-container">
-                        <VideoEmbed videoId={videoId} />
+                        <VideoEmbed videoId={videoId} autoplay />
                       </div>
                     ) : null}
                   </div>
@@ -1011,7 +1011,7 @@ const ChatWindow = ({ chatId, onToggleSidebar }) => {
         <div className="composer-hint" role="status" aria-live="polite">
           <div>
             <p style={{ margin: 0, fontSize: '16px', color: '#333' }}>
-              Maya may be wrong—check info and cookies.
+              Aurion may be wrong—check info and cookies.
             </p>
           </div>
         </div>

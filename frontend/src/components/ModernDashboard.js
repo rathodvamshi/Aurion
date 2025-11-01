@@ -746,7 +746,7 @@ const ModernDashboard = () => {
               >
                 {sidebarCollapsed ? <Menu size={18} /> : <X size={18} />}
               </button>
-              {!sidebarCollapsed && <h2 className="sidebar-title">Maya</h2>}
+              {!sidebarCollapsed && <h2 className="sidebar-title">Aurion</h2>}
             </div>
             <ModernSidebar
               collapsed={sidebarCollapsed}

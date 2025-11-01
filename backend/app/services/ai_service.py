@@ -23,7 +23,6 @@ import concurrent.futures
 
 
 import google.generativeai as genai
-import google.generativeai as genai
 
 from app.config import settings
 from app.prompt_templates import MAIN_SYSTEM_PROMPT  # legacy template retained for other uses
@@ -333,7 +332,7 @@ def _derive_provider_order() -> List[str]:
     order_env = (settings.AI_PROVIDER_ORDER or "").strip()
     if order_env:
         items = [s.strip().lower() for s in order_env.split(",") if s.strip()]
-    return [p for p in items if p in {"gemini"}]
+        return [p for p in items if p in {"gemini"}]
     
     # Default to Gemini-only for consistency with embeddings and memory system
     primary = (getattr(settings, "PRIMARY_PROVIDER", None) or "gemini").lower()
@@ -372,30 +371,9 @@ def _is_provider_available(name: str) -> bool:
 # 🔹 Provider Helpers
 # =====================================================
 def _try_gemini(prompt: str) -> str:
-    global current_gemini_key_index
-    if not gemini_keys:
-        raise RuntimeError("No Gemini API keys configured.")
-    # Prefer configured model, then a compact fallback list
-    configured = (getattr(settings, "GOOGLE_MODEL", None) or "gemini-2.5-flash").strip()
-    SUPPORTED_MODELS = [configured, "gemini-1.5-flash", "gemini-1.5-pro"]
-    max_retries = len(gemini_keys) * len(SUPPORTED_MODELS)
-    for attempt in range(max_retries):
-        key = gemini_keys[current_gemini_key_index]
-        model_name = SUPPORTED_MODELS[attempt % len(SUPPORTED_MODELS)]
-        try:
-            genai.configure(api_key=key)
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            if hasattr(response, "text") and response.text:
-                return response.text
-            elif hasattr(response, "candidates") and response.candidates:
-                return response.candidates[0].content
-            else:
-                raise ValueError("Gemini response was empty.")
-        except Exception as e:
-            logger.error(f"[Gemini] Key {current_gemini_key_index} model {model_name} failed: {e}")
-            current_gemini_key_index = (current_gemini_key_index + 1) % len(gemini_keys)
-    raise RuntimeError("All Gemini API keys or models failed or returned empty responses.")
+    """Delegate to the centralized gemini_service to avoid duplication and ensure consistent key rotation."""
+    from app.services import gemini_service as _gemini
+    return _gemini.generate(prompt)
 
 def _try_cohere(prompt: str) -> str:
     raise RuntimeError("Cohere support removed")

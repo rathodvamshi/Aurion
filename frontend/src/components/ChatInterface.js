@@ -1127,7 +1127,7 @@ const MessageRow = React.memo(function MessageRow({
         <div className="message-content">
           <div className="message-header">
             <span className="message-sender">
-              {isUser ? (user?.name || 'You') : 'Maya AI'}
+              {isUser ? (user?.name || 'You') : 'Aurion AI'}
             </span>
             <span className="message-timestamp">
               {timestamp.toLocaleTimeString([], { 
@@ -1270,7 +1270,7 @@ const MessageRow = React.memo(function MessageRow({
                 <p>
                   {activeSessionId 
                     ? "This session is ready for you to continue the conversation."
-                    : "Hi there! I'm Maya, your AI assistant. Ask me anything and I'll do my best to help you."
+                    : "Hi there! I'm Aurion, your AI assistant. Ask me anything and I'll do my best to help you."
                   }
                 </p>
                 <div className="empty-state-suggestions">
@@ -1299,7 +1299,7 @@ const MessageRow = React.memo(function MessageRow({
                           </div>
                           <div className="message-content">
                             <div className="message-header">
-                              <span className="message-sender">Maya AI</span>
+                              <span className="message-sender">Aurion AI</span>
                               <span className="message-timestamp">{new Date(message.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</span>
                             </div>
                             <div className="message-body">

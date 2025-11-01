@@ -228,34 +228,15 @@ def delete_task(current_user: Dict[str, Any], task_id: str) -> bool:
     return bool(getattr(res, "deleted_count", 0))
 
 
-def verify_otp(current_user: Dict[str, Any], task_id: str, otp: str) -> Dict[str, Any]:
+async def verify_otp_async(current_user: Dict[str, Any], task_id: str, otp: str) -> Dict[str, Any]:
     client = get_redis()
     if not client:
         raise RuntimeError("redis_unavailable")
     key = f"otp:task:{task_id}"
     try:
-        # asyncio Redis client supports await, but we may run in sync context here
-        # use .get via loop if available. Fallback to blocking call if configured so.
-        import asyncio
-        loop = None
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and hasattr(client, "get"):
-            val = loop.run_until_complete(client.get(key))  # type: ignore[attr-defined]
-        else:
-            val = None
+        val = await client.get(key)
     except Exception:
         val = None
-
-    # Fallback to direct await if within async call contexts
-    if val is None:
-        try:
-            import asyncio
-            val = asyncio.get_event_loop().run_until_complete(client.get(key))  # type: ignore[attr-defined]
-        except Exception:
-            val = None
 
     if not val:
         return {"verified": False, "reason": "otp_expired_or_missing"}
@@ -263,9 +244,7 @@ def verify_otp(current_user: Dict[str, Any], task_id: str, otp: str) -> Dict[str
         return {"verified": False, "reason": "otp_mismatch"}
 
     try:
-        # delete otp
-        import asyncio
-        asyncio.get_event_loop().run_until_complete(client.delete(key))  # type: ignore[attr-defined]
+        await client.delete(key)
     except Exception:
         pass
 
@@ -273,6 +252,22 @@ def verify_otp(current_user: Dict[str, Any], task_id: str, otp: str) -> Dict[str
     coll = db_client.get_tasks_collection()
     coll.update_one({"_id": _safe_object_id(task_id), "user_id": _user_id_str(current_user)}, {"$set": {"metadata.otp_verified": True, "updated_at": datetime.utcnow()}})
     return {"verified": True}
+
+
+def verify_otp(current_user: Dict[str, Any], task_id: str, otp: str) -> Dict[str, Any]:
+    """Sync wrapper for OTP verification. Uses asyncio.run only if no loop is active."""
+    try:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        # If we're in an event loop, run via create_task and wait
+        fut = asyncio.run_coroutine_threadsafe(
+            verify_otp_async(current_user, task_id, otp), loop
+        )
+        return fut.result()
+    except RuntimeError:
+        # No running loop
+        import asyncio as _asyncio
+        return _asyncio.run(verify_otp_async(current_user, task_id, otp))
 
 
 def list_upcoming_summary(current_user: Dict[str, Any], limit: int = 5) -> List[Dict[str, Any]]:

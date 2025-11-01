@@ -103,7 +103,7 @@ async def set_prefetched_data(cache_key: str, data: Dict[str, Any], ttl_seconds:
     try:
         json_data = json.dumps(data)
         await client.set(cache_key, json_data, ex=ttl_seconds)
-        logger.info(f"✅ Prefetched data cached under key: {cache_key}")
+        logger.debug(f"Prefetched data cached key={cache_key} ttl={ttl_seconds}")
     except Exception as e:
         logger.error(f"Failed to set prefetched data for key {cache_key}: {e}")
 

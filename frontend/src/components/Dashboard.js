@@ -345,7 +345,7 @@ const Dashboard = () => {
       <nav className="mini-navbar">
         <div className="logo-title">
           <i className="bi bi-robot"></i>
-          <h1>Maya</h1>
+          <h1>Aurion</h1>
         </div>
         <ul className="tabs">
           {tabs.map(tab => (

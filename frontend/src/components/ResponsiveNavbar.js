@@ -30,7 +30,7 @@ const ResponsiveNavbar = ({ onLogin, onSignup }) => {
     <nav className={`glassmorphism-navbar ${scrolled ? 'scrolled' : ''}`}>      
       <div className="glassmorphism-navbar-content">
         <div className="navbar-brand" onClick={() => navigate('/')}>          
-          <motion.span className="brand-text" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>Maya</motion.span>
+          <motion.span className="brand-text" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>Aurion</motion.span>
         </div>
 
         <div className="navbar-menu desktop-only">

@@ -11,10 +11,15 @@ from dateutil import parser as dtparser
 
 from app.config import settings
 from app.services import redis_service
+from app.services.http_client import get_async_client
 
 
 _BASE_CURRENT = "https://api.openweathermap.org/data/2.5/weather"
 _BASE_FORECAST = "https://api.openweathermap.org/data/2.5/forecast"  # 3-hourly
+
+# Reuse a single HTTP client for connection pooling/keep-alive (cuts ~50-150ms TCP/TLS per call)
+_HTTP_CLIENT: Optional[httpx.AsyncClient] = None
+_INFLIGHT: dict[str, asyncio.Task] = {}
 
 
 def _norm_date_keyword(date: Optional[str]) -> str:
@@ -31,16 +36,16 @@ def _norm_date_keyword(date: Optional[str]) -> str:
 
 
 async def _http_get_json(url: str, params: Dict[str, Any], timeout: float = 6.0, retry: bool = True) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            r = await client.get(url, params=params)
-            r.raise_for_status()
-            return r.json()
-        except (httpx.TimeoutException, httpx.ConnectError):
-            if retry:
-                await asyncio.sleep(0.5)
-                return await _http_get_json(url, params, timeout=timeout, retry=False)
-            raise
+    client = get_async_client()
+    try:
+        r = await client.get(url, params=params, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+    except (httpx.TimeoutException, httpx.ConnectError):
+        if retry:
+            await asyncio.sleep(0.35)
+            return await _http_get_json(url, params, timeout=timeout, retry=False)
+        raise
 
 
 def _select_forecast_bucket(forecast: Dict[str, Any], target_dt: datetime, prefer_hour: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -124,56 +129,71 @@ async def get_weather(city: str, date: Optional[str] = None) -> Dict[str, Any]:
     if cached:
         return {"ok": True, "data": cached, "error": None}
 
-    try:
-        when = _norm_date_keyword(date)
-        if when == "today":
-            payload = await _http_get_json(_BASE_CURRENT, {"q": city, "appid": api_key})
-            data = _format_current(payload)
-            await redis_service.set_prefetched_data(key, data, ttl_seconds=300)
-            return {"ok": True, "data": data, "error": None}
+    # Singleflight: coalesce concurrent identical requests by cache key
+    if key in _INFLIGHT:
+        try:
+            return await _INFLIGHT[key]
+        except Exception:
+            # If waiting task failed, fall through to fresh attempt
+            pass
 
-        # Tomorrow / Day after -> use 5-day forecast buckets
-        if when in ("tomorrow", "day_after"):
-            offset_days = 1 if when == "tomorrow" else 2
-            target_dt = datetime.now().replace(tzinfo=None) + timedelta(days=offset_days)
+    async def _compute() -> Dict[str, Any]:
+        try:
+            when = _norm_date_keyword(date)
+            if when == "today":
+                payload = await _http_get_json(_BASE_CURRENT, {"q": city, "appid": api_key})
+                data = _format_current(payload)
+                await redis_service.set_prefetched_data(key, data, ttl_seconds=600)
+                return {"ok": True, "data": data, "error": None}
+
+            # Tomorrow / Day after -> use 5-day forecast buckets
+            if when in ("tomorrow", "day_after"):
+                offset_days = 1 if when == "tomorrow" else 2
+                target_dt = datetime.now().replace(tzinfo=None) + timedelta(days=offset_days)
+                forecast = await _http_get_json(_BASE_FORECAST, {"q": city, "appid": api_key})
+                city_name = (forecast.get("city") or {}).get("name") or city
+                bucket = _select_forecast_bucket(forecast, target_dt)
+                if not bucket:
+                    return {"ok": False, "data": None, "error": "no_forecast"}
+                data = _format_bucket(city_name, bucket)
+                await redis_service.set_prefetched_data(key, data, ttl_seconds=600)
+                return {"ok": True, "data": data, "error": None}
+
+            # Otherwise attempt to parse explicit ISO date/datetime
+            try:
+                target_dt = dtparser.parse(when)
+            except Exception:
+                target_dt = None
+            if target_dt is None:
+                # Unknown keyword; fallback to current as safe default
+                payload = await _http_get_json(_BASE_CURRENT, {"q": city, "appid": api_key})
+                data = _format_current(payload)
+                await redis_service.set_prefetched_data(key, data, ttl_seconds=600)
+                return {"ok": True, "data": data, "error": None}
+            # Determine hour hint if provided (from datetime); else None -> noon
+            prefer_hour = target_dt.hour if isinstance(target_dt, datetime) else None
             forecast = await _http_get_json(_BASE_FORECAST, {"q": city, "appid": api_key})
             city_name = (forecast.get("city") or {}).get("name") or city
-            bucket = _select_forecast_bucket(forecast, target_dt)
+            bucket = _select_forecast_bucket(forecast, target_dt, prefer_hour=prefer_hour)
             if not bucket:
                 return {"ok": False, "data": None, "error": "no_forecast"}
             data = _format_bucket(city_name, bucket)
             await redis_service.set_prefetched_data(key, data, ttl_seconds=600)
             return {"ok": True, "data": data, "error": None}
-
-        # Otherwise attempt to parse explicit ISO date/datetime
-        try:
-            target_dt = dtparser.parse(when)
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if getattr(e, "response", None) else 0
+            if status == 404:
+                return {"ok": False, "data": None, "error": "city_not_found"}
+            return {"ok": False, "data": None, "error": f"http_{status}"}
         except Exception:
-            target_dt = None
-        if target_dt is None:
-            # Unknown keyword; fallback to current as safe default
-            payload = await _http_get_json(_BASE_CURRENT, {"q": city, "appid": api_key})
-            data = _format_current(payload)
-            await redis_service.set_prefetched_data(key, data, ttl_seconds=300)
-            return {"ok": True, "data": data, "error": None}
-        # Determine hour hint if provided (from datetime); else None -> noon
-        prefer_hour = target_dt.hour if isinstance(target_dt, datetime) else None
-        forecast = await _http_get_json(_BASE_FORECAST, {"q": city, "appid": api_key})
-        city_name = (forecast.get("city") or {}).get("name") or city
-        bucket = _select_forecast_bucket(forecast, target_dt, prefer_hour=prefer_hour)
-        if not bucket:
-            return {"ok": False, "data": None, "error": "no_forecast"}
-        data = _format_bucket(city_name, bucket)
-        await redis_service.set_prefetched_data(key, data, ttl_seconds=600)
-        return {"ok": True, "data": data, "error": None}
-    except httpx.HTTPStatusError as e:
-        # 404 city not found
-        status = e.response.status_code if getattr(e, "response", None) else 0
-        if status == 404:
-            return {"ok": False, "data": None, "error": "city_not_found"}
-        return {"ok": False, "data": None, "error": f"http_{status}"}
-    except Exception:
-        return {"ok": False, "data": None, "error": "unknown"}
+            return {"ok": False, "data": None, "error": "unknown"}
+
+    task = asyncio.create_task(_compute())
+    _INFLIGHT[key] = task
+    try:
+        return await task
+    finally:
+        _INFLIGHT.pop(key, None)
 
 
 __all__ = ["get_weather"]

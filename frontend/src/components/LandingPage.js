@@ -34,7 +34,7 @@ const LandingPage = () => {
         {
             id: 1,
             type: 'bot',
-            message: "Hey! I'm Maya, your personal AI assistant. I can help you with tasks, remember our conversations, and learn your preferences!",
+            message: "Hey! I'm Aurion, your personal AI assistant. I can help you with tasks, remember our conversations, and learn your preferences!",
             timestamp: "2:30 pm"
         },
         {
@@ -207,7 +207,7 @@ const LandingPage = () => {
                     >
                         Your Personal
                         <br />
-                        AI Assistant <span className="maya-text">MAYA</span>
+                        AI Assistant <span className="maya-text">Aurion</span>
                     </motion.h1>
                     
                     <motion.p 
@@ -216,7 +216,7 @@ const LandingPage = () => {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.8, delay: 0.6 }}
                     >
-                        Maya is an intelligent, adaptive AI that remembers your conversations, 
+                        Aurion is an intelligent, adaptive AI that remembers your conversations, 
                         learns your preferences, and grows with you to provide truly personalized assistance.
                     </motion.p>
                     
@@ -311,7 +311,7 @@ const FeatureSection = React.forwardRef((props, ref) => {
                     animate={isInView ? { opacity: 1, y: 0 } : {}}
                     transition={{ duration: 0.8 }}
                 >
-                    Why Choose Maya?
+                    Why Choose Aurion?
                 </motion.h2>
                 
                 <div className="features-grid">
@@ -354,7 +354,7 @@ const ChatDemoSection = React.forwardRef(({ chatMessages, newMessage, setNewMess
                         <Bot className="bot-icon" />
                     </div>
                     <div className="chat-info">
-                        <h3>Maya AI Assistant</h3>
+                        <h3>Aurion AI Assistant</h3>
                         <p>Online • Always learning</p>
                     </div>
                 </div>
@@ -448,8 +448,8 @@ const ContactSection = React.forwardRef((props, ref) => {
                 </div>
                 
                 <div className="footer-text">
-                    <p>Built with ❤️ by the Maya Team</p>
-                    <p>© 2025 Maya AI. All rights reserved.</p>
+                    <p>Built with ❤️ by the Aurion Team</p>
+                    <p>© 2025 Aurion AI. All rights reserved.</p>
                 </div>
             </motion.div>
         </section>

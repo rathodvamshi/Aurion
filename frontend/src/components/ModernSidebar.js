@@ -952,7 +952,7 @@ const ModernSidebar = ({
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: reducedMotion ? 0 : 0.2 }}
             >
-              <div className="brand-logo">Maya</div>
+              <div className="brand-logo">Aurion</div>
             </motion.div>
           )}
         </AnimatePresence>

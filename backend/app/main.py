@@ -48,6 +48,11 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+try:
+    from fastapi.responses import ORJSONResponse as _DefaultResponse
+except Exception:
+    # orjson not installed yet; fall back safely
+    _DefaultResponse = JSONResponse
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 import asyncio
@@ -73,6 +78,7 @@ from app.services import pinecone_service, redis_service
 from app.services.enhanced_memory_service import enhanced_memory_service
 from app.database import db_client
 from app.metrics import API_REQUESTS_TOTAL
+from app.services.http_client import close_async_client
 
 # --- Lifespan Management for Connections ---
 @asynccontextmanager
@@ -157,6 +163,11 @@ async def lifespan(app: FastAPI):
         await redis_service.redis_client.close()
     if db_client and db_client._client:
         db_client._client.close()
+    # Close shared HTTP client
+    try:
+        await close_async_client()
+    except Exception:
+        pass
     print("--- Shutdown complete. ---")
 
 from fastapi import Request
@@ -166,6 +177,7 @@ import logging
 app = FastAPI(
     title="Personal AI Assistant API",
     lifespan=lifespan,
+    default_response_class=_DefaultResponse,
 )
 
 # Global error handler to log all exceptions
@@ -217,6 +229,7 @@ print(f"CORS origins configured: {origins} allow_all={allow_all}")
 # --- Optional CORS debug / dynamic dev reflection ---
 DEBUG_CORS = os.getenv("DEBUG_CORS") in {"1", "true", "TRUE"}
 ALLOW_DYNAMIC_LOCAL = os.getenv("CORS_DYNAMIC_LOCAL") in {"1", "true", "TRUE"}
+ALLOW_VERCEL_PREVIEWS = os.getenv("CORS_ALLOW_VERCEL_PREVIEWS") in {"1", "true", "TRUE"}
 
 # Pre-compute dev host prefixes for dynamic acceptance (ONLY used if ALLOW_DYNAMIC_LOCAL)
 _LOCAL_DEV_PREFIXES = ("http://localhost:", "http://127.0.0.1:")
@@ -239,6 +252,21 @@ def _append_dynamic_origin_if_needed(origin: str | None):
             origins.append(origin)
             if DEBUG_CORS:
                 print(f"[CORS][dynamic] Added origin at runtime: {origin}")
+
+def _is_allowed_origin(origin: str | None) -> bool:
+    """Centralized origin allow check, including optional wildcard domains."""
+    if not origin:
+        return False
+    if allow_all:
+        return True
+    if origin in origins:
+        return True
+    if _is_dynamic_local_origin(origin):
+        return True
+    # Optional convenience: allow Vercel preview domains when enabled
+    if ALLOW_VERCEL_PREVIEWS and origin.endswith(".vercel.app"):
+        return True
+    return False
 
 app.add_middleware(
     CORSMiddleware,
@@ -266,9 +294,7 @@ async def _cors_and_logging_mw(request: Request, call_next):
     if method == "OPTIONS":
         from fastapi.responses import PlainTextResponse
         resp = PlainTextResponse("preflight ok", status_code=200)
-        if origins == ["*"] and origin:
-            resp.headers["Access-Control-Allow-Origin"] = origin
-        elif origin and (origin in origins or _is_dynamic_local_origin(origin)):
+        if _is_allowed_origin(origin):
             resp.headers["Access-Control-Allow-Origin"] = origin
             resp.headers.setdefault("Vary", "Origin")
         # Standard CORS preflight headers
@@ -286,9 +312,7 @@ async def _cors_and_logging_mw(request: Request, call_next):
     response.headers.setdefault("X-Debug-CORS", "1")
 
     try:
-        if origins == ["*"] and origin:
-            response.headers.setdefault("Access-Control-Allow-Origin", origin)
-        elif origin and (origin in origins or _is_dynamic_local_origin(origin)) and "access-control-allow-origin" not in response.headers:
+        if _is_allowed_origin(origin) and "access-control-allow-origin" not in response.headers:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers.setdefault("Vary", "Origin")
     except Exception:
@@ -298,9 +322,15 @@ async def _cors_and_logging_mw(request: Request, call_next):
         allowed = response.headers.get("Access-Control-Allow-Origin")
         print(f"[CORS][req] {method} {path} origin={origin} allow={bool(allowed)} status={response.status_code}")
     else:
-        # Lightweight single-line log for non-health endpoints
+        # Lightweight single-line log for non-health endpoints with sampling
         if not path.startswith("/health"):
-            print(f"REQ {method} {path} origin={origin} -> {response.status_code}")
+            try:
+                import os as _os, random as _random
+                rate = float(_os.getenv("REQUEST_LOG_SAMPLE", "1"))
+            except Exception:
+                rate = 1.0
+            if rate >= 1.0 or _random.random() < max(0.0, min(rate, 1.0)):
+                print(f"REQ {method} {path} origin={origin} -> {response.status_code}")
     return response
 
 # --- Global Exception Handlers (standard error envelope) ---
@@ -428,22 +458,16 @@ async def _final_cors_enforcer(request: Request, call_next):
     response = await call_next(request)
     try:
         origin = request.headers.get("origin")
-        if origin:
-            allowed = False
-            if allow_all:
-                allowed = True
-            elif origin in origins or _is_dynamic_local_origin(origin):
-                allowed = True
-            if allowed:
-                # Always set (overwrites missing header on 4xx/5xx)
-                response.headers["Access-Control-Allow-Origin"] = origin
-                response.headers.setdefault("Vary", "Origin")
-                response.headers.setdefault("Access-Control-Allow-Credentials", "true")
-                # Ensure standard exposed headers for frontend
-                existing_expose = response.headers.get("Access-Control-Expose-Headers", "")
-                needed = {"X-Session-Id", "X-App-Version", "X-Deprecation"}
-                merged = set(h.strip() for h in existing_expose.split(",") if h.strip()) | needed
-                response.headers["Access-Control-Expose-Headers"] = ", ".join(sorted(merged))
+        if origin and _is_allowed_origin(origin):
+            # Always set (overwrites missing header on 4xx/5xx)
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers.setdefault("Vary", "Origin")
+            response.headers.setdefault("Access-Control-Allow-Credentials", "true")
+            # Ensure standard exposed headers for frontend
+            existing_expose = response.headers.get("Access-Control-Expose-Headers", "")
+            needed = {"X-Session-Id", "X-App-Version", "X-Deprecation"}
+            merged = set(h.strip() for h in existing_expose.split(",") if h.strip()) | needed
+            response.headers["Access-Control-Expose-Headers"] = ", ".join(sorted(merged))
     except Exception:  # noqa: BLE001
         pass
     return response

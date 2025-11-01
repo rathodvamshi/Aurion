@@ -59,6 +59,61 @@ router = APIRouter(prefix="/api/chat", tags=["Chat"])
 logger = logging.getLogger(__name__)
 DEBUG_BRAIN = os.getenv("DEBUG_BRAIN", "false").lower() == "true"
 
+# ---- Local latency budgets (seconds) ----
+# Keep these small to reduce perceived latency. Adjustable via env if needed.
+CONTEXT_TIMEOUT_S = float(os.getenv("CHAT_CONTEXT_TIMEOUT_S", "0.8"))
+AI_TIMEOUT_S = float(os.getenv("CHAT_AI_TIMEOUT_S", str(getattr(settings, "AI_TIMEOUT", 2.2))))
+
+async def _safe_gather_context(*, user_id: str, user_key: str, session_id: str, latest_user_message: str, recent_messages: list[Any] | None) -> dict:
+    """Gather memory context with a strict timeout and resilient fallback."""
+    try:
+        return await asyncio.wait_for(
+            gather_memory_context(
+                user_id=user_id,
+                user_key=user_key,
+                session_id=session_id,
+                latest_user_message=latest_user_message,
+                recent_messages=recent_messages or [],
+            ),
+            timeout=CONTEXT_TIMEOUT_S,
+        )
+    except Exception:
+        try:
+            logger.warning("gather_memory_context timed out/failed; using minimal context")
+        except Exception:
+            pass
+        return {
+            "history": [],
+            "state": "general_conversation",
+            "pinecone_context": None,
+            "neo4j_facts": None,
+            "profile": {},
+            "user_facts_semantic": None,
+            "persistent_memories": None,
+        }
+
+async def _safe_ai_response(*, prompt: str, history: list[dict] | None, state: str, pinecone_context: str | None, neo4j_facts: str | None, profile: dict | None, user_facts_semantic: list[str] | None, persistent_memories: list[dict] | None) -> str:
+    """Call AI with a strict timeout; return a friendly fallback on timeout/failure."""
+    try:
+        return await asyncio.wait_for(
+            ai_get_response(
+                prompt=prompt,
+                history=history,
+                state=state,
+                pinecone_context=pinecone_context,
+                neo4j_facts=neo4j_facts,
+                profile=profile,
+                user_facts_semantic=user_facts_semantic,
+                persistent_memories=persistent_memories,
+            ),
+            timeout=AI_TIMEOUT_S,
+        )
+    except Exception:
+        return (
+            "I'm having trouble answering quickly right now. "
+            "Here's a short reply; you can retry for more details."
+        )
+
 # -----------------------------
 # Pydantic Models
 # -----------------------------
@@ -1095,7 +1150,7 @@ async def handle_chat_message(
     # For now, just echoing back for demonstration
     
     try:
-        context = await gather_memory_context(
+        context = await _safe_gather_context(
             user_id=user_id,
             user_key=current_user.get("email", user_id),
             session_id=session_id,
@@ -1120,7 +1175,7 @@ async def handle_chat_message(
 
     # Generate assistant response with a resilient fallback to avoid surfacing 500s
     try:
-        ai_response_text = await ai_get_response(
+        ai_response_text = await _safe_ai_response(
             prompt=message,
             history=context.get("history"),
             state=context.get("state", "general_conversation"),
@@ -1718,7 +1773,7 @@ async def start_new_chat_stream(
     except Exception:  # noqa: BLE001
         pass
 
-    context = await gather_memory_context(
+    context = await _safe_gather_context(
         user_id=user_id,
         user_key=current_user.get("email", user_id),
         session_id="new",
@@ -1727,7 +1782,7 @@ async def start_new_chat_stream(
     )
 
     # Generate AI response in background thread
-    ai_response_text = await ai_get_response(
+    ai_response_text = await _safe_ai_response(
         prompt=request.message,
         history=context.get("history"),
         state=context.get("state", "general_conversation"),
@@ -1871,7 +1926,7 @@ async def continue_chat(
     except Exception:
         pass
 
-    context = await gather_memory_context(
+    context = await _safe_gather_context(
         user_id=user_id,
         user_key=current_user.get("email", user_id),
         session_id=session_id,
@@ -1951,7 +2006,7 @@ async def continue_chat(
 
     if fast_answer is None:
         # Fall back to full model call
-        ai_response_text = await ai_get_response(
+        ai_response_text = await _safe_ai_response(
             prompt=request.message,
             history=recent_history,
             state=current_state,
@@ -2128,7 +2183,7 @@ async def continue_chat_stream(
     except Exception:
         pass
 
-    context = await gather_memory_context(
+    context = await _safe_gather_context(
         user_id=user_id,
         user_key=current_user.get("email", user_id),
         session_id=session_id,
@@ -2149,8 +2204,7 @@ async def continue_chat_stream(
     if prefetched_context:
         pinecone_context = f"{pinecone_context}\n{prefetched_context}"
 
-    ai_response_text = await run_in_threadpool(
-        ai_get_response,
+    ai_response_text = await _safe_ai_response(
         prompt=request.message,
         history=recent_history,
         state=current_state,
@@ -2158,6 +2212,7 @@ async def continue_chat_stream(
         neo4j_facts=context.get("neo4j_facts"),
         profile=context.get("profile"),
         user_facts_semantic=context.get("user_facts_semantic"),
+        persistent_memories=context.get("persistent_memories"),
     )
 
     # Intent detection and background tasks (same as non-streaming)

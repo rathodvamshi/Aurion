@@ -159,22 +159,55 @@ async def gather_memory_context(
     semantic_time_ms: float = 0.0
     try:
         start_sem = time.time()
-        
+
+        # Helper to run blocking Pinecone calls with a soft timeout budget
+        async def _with_budget(func, *args, timeout_ms: int = 100, default=None, **kwargs):
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(func, *args, **kwargs),
+                    timeout=timeout_ms / 1000.0,
+                )
+            except asyncio.TimeoutError:
+                return default
+            except Exception:
+                return default
+
+        # Split semantic budget across calls (rough heuristic)
+        b_total = max(int(semantic_budget_ms), 60)
+        b_similar = max(int(b_total * 0.34), 50)
+        b_facts = max(int(b_total * 0.33), 40)
+        b_mems = max(int(b_total * 0.33), 40)
+
         # Query similar texts from message history
-        pinecone_context = pinecone_service.query_similar_texts(
-            user_id=user_id, text=latest_user_message, top_k=top_k_semantic
+        pinecone_context = await _with_budget(
+            pinecone_service.query_similar_texts,
+            user_id,
+            latest_user_message,
+            top_k_semantic,
+            timeout_ms=b_similar,
+            default=None,
         )
-        
+
         # Query user facts and memories
-        user_fact_snippets = pinecone_service.query_user_facts(
-            user_id=user_id, hint_text=latest_user_message, top_k=top_k_user_facts
-        )
-        
+        user_fact_snippets = await _with_budget(
+            pinecone_service.query_user_facts,
+            user_id,
+            latest_user_message,
+            top_k_user_facts,
+            timeout_ms=b_facts,
+            default=[],
+        ) or []
+
         # Also query structured memories for better context
         try:
-            memory_matches = pinecone_service.query_user_memories(
-                user_id=user_id, query_text=latest_user_message, top_k=5
-            )
+            memory_matches = await _with_budget(
+                pinecone_service.query_user_memories,
+                user_id,
+                latest_user_message,
+                5,
+                timeout_ms=b_mems,
+                default=[],
+            ) or []
             if memory_matches:
                 memory_contexts = [m.get("text", "") for m in memory_matches if m.get("text")]
                 if memory_contexts:
@@ -185,19 +218,21 @@ async def gather_memory_context(
                         pinecone_context = f"[Structured Memories]\n{memory_context}"
         except Exception as e:  # noqa: BLE001
             logger.debug(f"Memory query failed: {e}")
-        
+
         semantic_time_ms = (time.time() - start_sem) * 1000
         try:
             from app.services import metrics as _m
             _m.record_hist("resource.pinecone.latency_ms", semantic_time_ms)
         except Exception:
             pass
-        
+
         # Log memory retrieval success
         if pinecone_context or user_fact_snippets:
-            logger.info(f"Retrieved memory context for user {user_id}: "
-                       f"pinecone={bool(pinecone_context)}, facts={len(user_fact_snippets)}")
-        
+            logger.info(
+                f"Retrieved memory context for user {user_id}: "
+                f"pinecone={bool(pinecone_context)}, facts={len(user_fact_snippets)}"
+            )
+
     except Exception as e:  # noqa: BLE001
         logger.warning(f"Pinecone query failed: {e}")
         pinecone_context = None

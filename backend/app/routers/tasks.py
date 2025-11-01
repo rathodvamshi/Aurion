@@ -426,7 +426,7 @@ async def verify_task_otp(
         raise HTTPException(status_code=400, detail="OTP required")
     
     try:
-        result = task_service.verify_otp(current_user, task_id, otp)
+        result = await task_service.verify_otp_async(current_user, task_id, otp)
         
         if result.get("verified"):
             return {"status": "success", "message": "OTP verified successfully"}

@@ -6,7 +6,7 @@ import { motion } from 'framer-motion';
 import { ArrowLeft } from 'lucide-react';
 import '../styles/AuthNavbar.css';
 
-const AuthNavbar = ({ title = "Maya", showBack = true, backUrl = "/" }) => {
+const AuthNavbar = ({ title = "Aurion", showBack = true, backUrl = "/" }) => {
     const navigate = useNavigate();
 
     const handleBack = () => {

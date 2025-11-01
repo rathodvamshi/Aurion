@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: aurion-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: APP_VERSION
+        value: "1.0.0"
+      # Allow ONLY your frontend origins in production. For initial testing, set CORS_ALLOW_ALL=true
+      - key: CORS_ORIGINS
+        value: "https://YOUR-VERCEL-DOMAIN.vercel.app"
+      # Enable this to allow *.vercel.app preview domains
+      - key: CORS_ALLOW_VERCEL_PREVIEWS
+        value: "true"
+      # ==== REQUIRED SECRETS (set real values in Render dashboard) ====
+      - key: SECRET_KEY
+        generateValue: true
+      - key: MONGO_URI
+        value: "CHANGE_ME"
+      - key: MONGO_DB
+        value: "MAYA"
+      - key: MAIL_USERNAME
+        value: "CHANGE_ME"
+      - key: MAIL_PASSWORD
+        value: "CHANGE_ME"
+      - key: MAIL_FROM
+        value: "no-reply@example.com"
+      - key: PINECONE_API_KEY
+        value: "CHANGE_ME"
+      - key: NEO4J_URI
+        value: "neo4j+s://YOUR_INSTANCE.databases.neo4j.io"
+      - key: NEO4J_USER
+        value: "CHANGE_ME"
+      - key: NEO4J_PASSWORD
+        value: "CHANGE_ME"
+      # Optional/Recommended
+      - key: REDIS_URL
+        value: "rediss://:PASSWORD@HOST:6380/0"
+      - key: GEMINI_API_KEY
+        value: ""
+      - key: OPENAI_API_KEY
+        value: ""
+      - key: NEWS_API_KEY
+        value: ""
+      - key: WEATHER_API_KEY
+        value: ""

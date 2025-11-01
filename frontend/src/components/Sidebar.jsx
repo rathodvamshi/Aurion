@@ -549,8 +549,8 @@ const Sidebar = ({
            role="complementary" onKeyDown={(e) => { if (e.key === 'Escape') closeAllOverlays(); }}>
         <div className="sidebar-header">
           <div className="sidebar-logo">
-            <div className="logo-icon">M</div>
-            {isOpen && <span className="logo-text">MAYA</span>}
+            <div className="logo-icon">A</div>
+            {isOpen && <span className="logo-text">Aurion</span>}
           </div>
         </div>
         <div className="sidebar-content">

@@ -242,7 +242,7 @@ const ChatMessage = ({ message, index, onCopy, onLike, onFeedback, onSpeak, onEd
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
         >
-          {isUser ? 'You' : 'Maya AI'}
+          {isUser ? 'You' : 'Aurion AI'}
         </motion.div>
       </motion.div>
 
@@ -467,7 +467,7 @@ const ChatMessage = ({ message, index, onCopy, onLike, onFeedback, onSpeak, onEd
                       exit={{ opacity: 0, scale: 0.9, y: -10 }}
                       transition={{ duration: 0.2 }}
                     >
-                      <div className="dropdown-item" onClick={() => navigator.share && navigator.share({title: 'Maya AI Message', text: message.text})}>
+                      <div className="dropdown-item" onClick={() => navigator.share && navigator.share({title: 'Aurion AI Message', text: message.text})}>
                         <Share size={14} />
                         Share
                       </div>
@@ -537,7 +537,7 @@ const TypingIndicator = () => (
           }}
         />
       </div>
-      <div className="sender-label">Maya AI</div>
+  <div className="sender-label">Aurion AI</div>
     </motion.div>
 
     <div className="message-content">
@@ -567,7 +567,7 @@ const TypingIndicator = () => (
             animate={{ opacity: [0.7, 1, 0.7] }}
             transition={{ duration: 1.5, repeat: Infinity }}
           >
-            Maya is thinking...
+            Aurion is thinking...
           </motion.p>
         </div>
       </motion.div>
@@ -669,7 +669,7 @@ const EmptyState = () => (
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.3 }}
     >
-      <h3>Welcome to Maya AI</h3>
+  <h3>Welcome to Aurion AI</h3>
       <p>Start a conversation to unlock the power of AI assistance</p>
     </motion.div>
   </motion.div>
