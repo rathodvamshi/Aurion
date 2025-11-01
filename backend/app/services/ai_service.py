@@ -576,12 +576,10 @@ def _maybe_handle_introspection(
 
     # Name-centric queries
     if any(p in low for p in [
-        "what's my name", "whats my name", "do you know my name", "do u know my name", "my name?", "tell me my name"
+        "what's my name", "whats my name", "what is my name", "do you know my name", "do u know my name", "my name?", "tell me my name"
     ]):
         if name:
-            # Differentiate question styles for a slightly more natural feel while still deterministic.
-            if "do" in low:
-                return True, f"Yes, your name is {name}."
+            # Clean, direct answer - will be formatted by response_shaper
             return True, f"Your name is {name}."
         return True, "I don't have your name yet. You can tell me and I'll remember it."
 
@@ -677,11 +675,12 @@ async def get_response(
     except Exception:
         pass
 
-    # Introspection shortcut handling
+    # Introspection shortcut handling - still needs formatting
     handled, direct_resp = _maybe_handle_introspection(
         prompt, profile, neo4j_facts, user_facts_semantic
     )
     if handled:
+        # Return direct response (will be formatted by response_shaper downstream)
         return direct_resp
 
     # Lightweight emotion detection BEFORE composing the prompt so we can append persona directive
@@ -885,23 +884,23 @@ async def get_response(
         tone_override=tone_override,
     ) if use_emotion else ""
 
-    # Augment persona directive with inferred preferences if present (and not duplicative)
+    # Augment persona directive with inferred preferences - simplified, always prioritize brevity
     if inferred_prefs:
         try:
             detail_level = inferred_prefs.get("detail_level")
             tone_pref_inferred = inferred_prefs.get("tone_preference_inferred")
-            depth_bias = inferred_prefs.get("depth_bias")
             add_bits = []
-            if detail_level in {"deep", "concise"}:
-                if detail_level == "deep":
-                    add_bits.append("User historically engages well with deeper explanations—offer a succinct answer first then optionally one compact deeper nuance.")
-                elif detail_level == "concise":
-                    add_bits.append("User tends to prefer concise replies—opt for brevity and only elaborate if they ask.")
+            # Always prioritize concise responses
+            if detail_level == "concise":
+                add_bits.append("Keep response very brief (1-2 sentences max).")
+            elif detail_level == "deep":
+                # Even for deep, keep it brief but informative
+                add_bits.append("Keep response brief (2-3 sentences max).")
+            else:
+                # Default: always be concise
+                add_bits.append("Keep response brief (1-2 sentences max).")
             if tone_pref_inferred and (tone_override or "")[:20].lower() != tone_pref_inferred.lower():
-                add_bits.append(f"Historical implicit tone preference: {tone_pref_inferred}. Subtly bias wording toward this without stating it.")
-            if depth_bias is not None and isinstance(depth_bias, (int, float)):
-                # No direct instruction; depth_bias captured by detail_level already; optional future refinement
-                pass
+                add_bits.append(f"Prefer {tone_pref_inferred} tone briefly.")
             if add_bits:
                 persona_directive = f"{persona_directive} {' '.join(add_bits)}".strip()
         except Exception:  # noqa: BLE001
@@ -922,14 +921,52 @@ async def get_response(
         except Exception:  # noqa: BLE001
             pass
 
+    # Real-time web search integration with content scraping (if query suggests current/recent info)
+    search_context = ""
+    try:
+        from app.services.realtime_search import (
+            smart_search_with_scraping, 
+            should_use_search, 
+            build_search_context
+        )
+        
+        if should_use_search(prompt):
+            logger.info(f"🔍 Real-time search with scraping triggered for query: {prompt[:50]}")
+            # Use scraping-enabled search to get full article content
+            search_results = await smart_search_with_scraping(
+                prompt, 
+                scrape_content=True,  # Enable content scraping
+                use_cache=True
+            )
+            
+            if search_results:
+                # Build combined context: memory + search results with scraped content
+                memory_summary = neo4j_facts or pinecone_context or ""
+                search_context = await build_search_context(memory_summary, search_results)
+                logger.info(f"✅ Real-time search returned {len(search_results)} results with scraped content")
+            else:
+                logger.warning("⚠️ Real-time search returned no results")
+    except Exception as e:
+        logger.debug(f"Real-time search failed (non-fatal): {e}")
+        # Continue without search context - not a blocking error
+    
     # Use new composer (falls back to legacy style if needed later). We piggyback persona directive
     # by appending it to the user message so providers stay stateless.
     augmented_user_prompt = f"{prompt}\n\n[Persona Guidance]\n{persona_directive}" if persona_directive else prompt
+    
+    # Enhance pinecone_context with search results if available
+    enhanced_pinecone_context = pinecone_context
+    if search_context:
+        if enhanced_pinecone_context:
+            enhanced_pinecone_context = f"{enhanced_pinecone_context}\n\n{search_context}"
+        else:
+            enhanced_pinecone_context = search_context
+    
     full_prompt = compose_prompt(
         user_message=augmented_user_prompt,
         state=state,
         history=history or [],
-        pinecone_context=pinecone_context,
+        pinecone_context=enhanced_pinecone_context,
         neo4j_facts=neo4j_facts,
         profile=profile,
         user_facts_semantic=user_facts_semantic,
@@ -937,13 +974,18 @@ async def get_response(
         system_override=system_override,
     )
 
-    # Latency-aware brevity directive (only once): encourage concise answer to meet 2-5s target.
+    # Always enforce brevity: keep responses short and focused
     try:
-        if settings.AI_PRIMARY_TIMEOUT <= 2.5:
-            limit = getattr(settings, "FAST_RESPONSE_WORD_LIMIT", 120)
-            brevity_tag = "[LatencyTarget] Provide the core answer first in <={} words. If user wanted depth, add one short follow-up sentence. Avoid verbose preambles.".format(limit)
-            if brevity_tag not in full_prompt:
-                full_prompt = f"{brevity_tag}\n\n" + full_prompt
+        limit = getattr(settings, "FAST_RESPONSE_WORD_LIMIT", 60)  # Reduced from 120 to 60
+        brevity_tag = (
+            "[Response Guidelines] Answer directly in <={} words (1-2 sentences). "
+            "Be friendly but brief. "
+            "NEVER say 'Last time we discussed', 'As mentioned before', 'Previously', 'Earlier', "
+            "or reference past conversations/messages. "
+            "Answer ONLY the current question. Do NOT mention context or how you got the information."
+        ).format(limit)
+        if brevity_tag not in full_prompt:
+            full_prompt = f"{brevity_tag}\n\n" + full_prompt
     except Exception:  # noqa: BLE001
         pass
 
@@ -1087,25 +1129,30 @@ async def get_response(
         except Exception:  # noqa: BLE001
             pass
 
+    # Disabled suggestions by default - focus only on answering the user's question
+    # Users can explicitly ask for suggestions if they want them
     if not suppress_suggestions:
-        try:
-            before = result
-            result = append_suggestions_if_missing(result, prompt, profile)
-            if result is not before and SUGGESTION_PREFIX in result:
-                try:
-                    sug_lines = [l.strip() for l in result.splitlines() if l.strip().startswith(SUGGESTION_PREFIX)][-2:]
-                    tone_pref = None
-                    if isinstance(profile, dict):
-                        prefs = profile.get("preferences") or {}
-                        if isinstance(prefs, dict):
-                            tone_pref = (prefs.get("tone") or "").lower() or None
-                    logger.info(
-                        "suggestions_meta | mode=inline tone=%s s1=%s s2=%s", tone_pref, sug_lines[0] if sug_lines else None, sug_lines[1] if len(sug_lines) > 1 else None
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
-        except Exception:  # noqa: BLE001
-            pass
+        # Only add suggestions if user explicitly asks for them
+        prompt_lower = (prompt or "").lower()
+        if any(keyword in prompt_lower for keyword in ["suggest", "recommend", "options", "ideas", "what else"]):
+            try:
+                before = result
+                result = append_suggestions_if_missing(result, prompt, profile)
+                if result is not before and SUGGESTION_PREFIX in result:
+                    try:
+                        sug_lines = [l.strip() for l in result.splitlines() if l.strip().startswith(SUGGESTION_PREFIX)][-2:]
+                        tone_pref = None
+                        if isinstance(profile, dict):
+                            prefs = profile.get("preferences") or {}
+                            if isinstance(prefs, dict):
+                                tone_pref = (prefs.get("tone") or "").lower() or None
+                        logger.info(
+                            "suggestions_meta | mode=inline tone=%s s1=%s s2=%s", tone_pref, sug_lines[0] if sug_lines else None, sug_lines[1] if len(sug_lines) > 1 else None
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception:  # noqa: BLE001
+                pass
 
     try:
         logger.info(
@@ -1137,30 +1184,38 @@ async def get_response(
                 _m.incr(f"complexity.{complexity}")
         except Exception:  # noqa: BLE001
             pass
-        # Persona best-friend layer (post-processing) if enabled
+        # Persona best-friend layer (post-processing) - DISABLED for direct questions
+        # We skip persona responses for simple factual queries to keep responses clean
         try:
             if settings.ENABLE_PERSONA_RESPONSE:
-                from app.services.persona_response import generate_response as _persona_gen
-                user_id_for_log = user_id_for_log or (profile or {}).get("user_id")  # reuse id if available
-                persona_style = getattr(settings, "PERSONA_STYLE", "best_friend")
-                # Confidence-based neutral fallback: if low confidence, suppress emotion-specific template
-                persona_emotion = getattr(emotion_result, "emotion", "neutral")
-                try:
-                    if getattr(emotion_result, "confidence", 0.0) < settings.ADV_EMOTION_CONFIDENCE_THRESHOLD:
-                        persona_emotion = "neutral"
-                except Exception:
-                    pass
-                persona_result = await _persona_gen(
-                    prompt,
-                    emotion=persona_emotion,
-                    user_id=str(user_id_for_log) if user_id_for_log else None,
-                    base_ai_text=result,
-                    style=persona_style,
-                    confidence=getattr(emotion_result, "confidence", None),
-                    second_emotion=None,  # placeholder for future advanced multi-label
-                )
-                if persona_result:
-                    result = persona_result
+                # Only apply persona for emotional/contextual queries, not simple facts
+                prompt_lower = (prompt or "").lower()
+                is_factual_query = any(keyword in prompt_lower for keyword in [
+                    "what is my name", "whats my name", "what are my", "my name", 
+                    "tell me my", "do you know my", "what do i like"
+                ])
+                
+                if not is_factual_query:
+                    from app.services.persona_response import generate_response as _persona_gen
+                    user_id_for_log = user_id_for_log or (profile or {}).get("user_id")
+                    persona_style = getattr(settings, "PERSONA_STYLE", "best_friend")
+                    persona_emotion = getattr(emotion_result, "emotion", "neutral")
+                    try:
+                        if getattr(emotion_result, "confidence", 0.0) < settings.ADV_EMOTION_CONFIDENCE_THRESHOLD:
+                            persona_emotion = "neutral"
+                    except Exception:
+                        pass
+                    persona_result = await _persona_gen(
+                        prompt,
+                        emotion=persona_emotion,
+                        user_id=str(user_id_for_log) if user_id_for_log else None,
+                        base_ai_text=result,
+                        style=persona_style,
+                        confidence=getattr(emotion_result, "confidence", None),
+                        second_emotion=None,
+                    )
+                    if persona_result:
+                        result = persona_result
         except Exception:  # noqa: BLE001
             pass
         log_interaction_event(

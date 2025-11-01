@@ -127,7 +127,7 @@ def render_task_otp_email(title: str, otp: str, user_email: str, **kwargs) -> st
                 color: #6b7280;
                 font-size: 14px;
             }}
-            .maya-logo {{
+            .aurion-logo {{
                 color: #8b5cf6;
                 font-weight: 600;
             }}
@@ -167,7 +167,7 @@ def render_task_otp_email(title: str, otp: str, user_email: str, **kwargs) -> st
             
             <div class="footer">
                 <p>
-                    <span class="maya-logo">Maya AI</span> 💫 - Your Personal Assistant<br>
+                    <span class="aurion-logo">Aurion AI</span> 💫 - Your Personal Assistant<br>
                     <small>This reminder was automatically generated based on your request.</small>
                 </p>
             </div>

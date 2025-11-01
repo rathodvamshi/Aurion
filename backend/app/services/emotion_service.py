@@ -202,17 +202,17 @@ def build_persona_directive(
     escalation: bool = False,
     tone_override: Optional[str] = None,
 ) -> str:
+    """Build a concise persona directive focused on current response only."""
     parts = [
-        f"Detected user emotion: {emotion.emotion} (confidence {emotion.confidence:.2f}).",
         f"Adopt a {emotion.tone} tone.",
+        "Keep response SHORT (1-3 sentences), friendly, and direct.",
+        "Focus ONLY on answering the user's current question.",
     ]
     if tone_override:
-        parts.append(f"User preference tone override: {tone_override}. Apply this style harmoniously without stating it explicitly.")
-    if last_positive_memory:
-        parts.append(f"Gently reference this positive memory if supportive: {last_positive_memory}.")
+        parts.append(f"User prefers {tone_override} tone.")
     if escalation and emotion.emotion in {"sad", "anxious", "angry"}:
-        parts.append("User has been in this emotional state repeatedly. Increase empathy, offer a gentle coping suggestion, and explicitly invite them to share more if they want.")
-    parts.append("Keep response concise, empathetic, and add one short follow-up question when user is sad or anxious.")
+        parts.append("Be empathetic but brief - do not add multiple follow-up questions.")
+    # Removed last_positive_memory reference to avoid mentioning old conversations
     return " ".join(parts)
 
 

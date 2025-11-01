@@ -196,7 +196,7 @@ def wipe_neo4j(dry_run: bool, batch: int = 10000, timeout: int = 30) -> Dict[str
 def wipe_pinecone(dry_run: bool) -> Dict[str, Any]:
     summary: Dict[str, Any] = {"enabled": False, "index": None, "vectors_before": None, "namespaces": [], "deleted_all": False, "error": None, "note": None}
     api_key = getattr(settings, "PINECONE_API_KEY", None)
-    index_name = getattr(settings, "PINECONE_INDEX", None) or "maya"
+    index_name = getattr(settings, "PINECONE_INDEX", None) or "aurion"
     if not api_key:
         summary["error"] = "Pinecone API key not configured"
         return summary

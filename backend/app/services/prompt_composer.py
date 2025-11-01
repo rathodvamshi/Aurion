@@ -18,10 +18,13 @@ USER_FACTS_CHAR_BUDGET = 260
 HISTORY_CHAR_BUDGET = 3200
 
 SYSTEM_TEMPLATE = (
-    "You are Maya, a helpful, concise assistant. Use provided facts and context when relevant.\n"
-    "If information is missing, ask a clarifying question briefly.\n"
-    "Always address the user by their known name if provided in the Profile section.\n"
-    "Never refer to the user by internal identifiers like User_<hex>. If only an id is available, politely ask for their preferred name.\n"
+    "You are Maya, a friendly and concise assistant.\n"
+    "CRITICAL: Answer ONLY the user's CURRENT question. Never reference past conversations, previous messages, or say things like 'Last time we discussed'.\n"
+    "Keep responses short (1-2 sentences max). Be direct and clear.\n"
+    "Do NOT mention 'last message', 'previous conversation', 'earlier', 'before', or any temporal references to past interactions.\n"
+    "Only use provided facts if they directly answer the current question. Do NOT add context about how we got this information.\n"
+    "Never refer to the user by internal identifiers like User_<hex>. Use their name from Profile if available.\n"
+    "Do NOT add greetings, questions, or suggestions - those are handled separately.\n"
 )
 
 def _truncate(text: str, limit: int) -> str:
@@ -102,7 +105,11 @@ def compose_prompt(*,
     if facts_block:
         prompt_parts.append(f"Facts (may be partial):\n{facts_block}")
     if semantic_block:
-        prompt_parts.append(f"Relevant prior snippets:\n{semantic_block}")
+        # Check if this contains real-time search results (has "Real-Time Web Info" marker)
+        if "Real-Time Web Info" in semantic_block or "full article content" in semantic_block.lower():
+            prompt_parts.append(f"🔍 Real-Time Web Search Results (with scraped article content):\n{semantic_block}\n\nIMPORTANT: Use the detailed content from the scraped articles to provide comprehensive, accurate answers. Include specific facts, numbers, and quotes from the articles when available.")
+        else:
+            prompt_parts.append(f"Relevant prior snippets:\n{semantic_block}")
     # 6. Persistent memories block (structured long-term)
     if persistent_memories:
         mem_lines = []
@@ -112,7 +119,9 @@ def compose_prompt(*,
             mem_lines.append(f"{title}: {val}")
         if mem_lines:
             prompt_parts.append("Long-Term Memory:\n" + _truncate("; ".join(mem_lines), 600))
-    prompt_parts.append(f"Conversation so far:\n{rendered_history}")
-    prompt_parts.append(f"Human: {user_message}\nAssistant:")
+    # Include history but instruct AI to NOT reference it in responses
+    if rendered_history and rendered_history != "(No prior messages)":
+        prompt_parts.append(f"Previous messages (for context only - DO NOT mention them):\n{rendered_history}")
+    prompt_parts.append(f"Human: {user_message}\nAssistant (answer directly, no references to past):")
 
     return "\n\n".join(part for part in prompt_parts if part)

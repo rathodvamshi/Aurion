@@ -103,15 +103,31 @@ def detect_task_intent(message: str) -> bool:
     
     pattern_match = any(re.search(pattern, low) for pattern in task_patterns)
     
-    # Guard against false positives
+    # Guard against false positives - search/information queries should NOT trigger reminders
     false_positive_patterns = [
         r"what\s+is\s+a\s+(?:reminder|task|meeting)",
         r"how\s+to\s+(?:create|make|set)",
         r"explain\s+(?:reminder|task|meeting)",
         r"tell\s+me\s+about\s+(?:reminder|task|meeting)",
+        # Search/info queries - don't treat as reminders
+        r"tell\s+me\s+about\s+(?:recent|latest|current|tech|technology|news|updates)",
+        r"tell\s+me\s+about\s+(?!.*(?:remind|schedule|task|meeting|appointment|call|alarm))",
+        r"what\s+(?:are|is)\s+(?:recent|latest|current|tech|technology|news|updates)",
+        r"show\s+me\s+(?:recent|latest|current|tech|technology|news)",
+        r"find\s+me\s+(?:information|info|about)",
     ]
     
     is_false_positive = any(re.search(pattern, low) for pattern in false_positive_patterns)
+    
+    # Additional check: if message contains search keywords and no explicit task keywords, it's likely a search query
+    search_keywords = ["recent", "latest", "current", "tech", "technology", "news", "updates", "information"]
+    has_search_keywords = any(keyword in low for keyword in search_keywords)
+    explicit_task_keywords = ["remind me", "schedule", "create task", "set reminder", "appointment", "meeting", "alarm"]
+    has_explicit_task = any(keyword in low for keyword in explicit_task_keywords)
+    
+    # If it has search keywords but no explicit task keywords, it's probably not a reminder
+    if has_search_keywords and not has_explicit_task:
+        is_false_positive = True
     
     return (english_match or multilingual_match or pattern_match) and not is_false_positive
 

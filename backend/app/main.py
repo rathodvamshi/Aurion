@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+load_dotenv()
+import os
+print('DEBUG: BREVO_API_KEY at startup:', os.getenv('BREVO_API_KEY'))
 import os
 # Ensure environment variables (including log suppressors) are loaded as early as possible
 try:
@@ -56,7 +60,7 @@ from app.routers import health_extended
 from app.routers import user as user_router
 from app.routers import memories as memories_router
 from app.routers import annotations as annotations_router
-from app.routers import tasks, profile, dashboard, ops
+from app.routers import tasks, profile, dashboard, ops, reminders
 from app.routers import youtube as youtube_router
 from app.routers import enhanced_memory, database_inspector, data_management, memory_health
 from app.config import settings
@@ -371,6 +375,7 @@ app.include_router(dashboard.router)
 app.include_router(mini_agent.router)
 app.include_router(annotations_router.router)
 app.include_router(youtube_router.router)
+app.include_router(reminders.router)
 app.include_router(assistant_router.router)
 app.include_router(enhanced_memory.router)
 app.include_router(database_inspector.router)
@@ -524,17 +529,17 @@ async def send_test_email(recipient: str):
             "ok": False,
             "error": "SMTP not configured. Set MAIL_USERNAME, MAIL_PASSWORD, and MAIL_FROM in .env",
         })
-    subject = "Project Maya Test Email"
-    body = "This is a test email from Project Maya backend."
+
+    subject = "Project Aurion Test Email"
     html = """
     <html><body>
-      <h3>Project Maya Test Email</h3>
-      <p>This is a test email from the backend.</p>
+        <h3>Project Aurion Test Email</h3>
+        <p>This is a test email from the backend.</p>
     </body></html>
     """
     try:
         # Run blocking SMTP in a thread to avoid blocking event loop
-        await asyncio.to_thread(email_utils.send_email, recipient, subject, body, html)
+        await asyncio.to_thread(email_utils.send_email, recipient, subject, html)
         return {"ok": True, "recipient": recipient}
     except Exception as e:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})

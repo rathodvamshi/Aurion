@@ -482,7 +482,7 @@ class TestCeleryWorkerComprehensive:
             html = email_call[1]["html"]
             assert "Test Task" in html
             assert "Task Reminder" in html
-            assert "Maya AI" in html
+            assert "Aurion AI" in html
             
             # Check text content
             text = email_call[1]["text"]

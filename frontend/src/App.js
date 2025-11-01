@@ -198,7 +198,7 @@ const Home = ({ setAuthModal }) => {
             <div ref={mountRef} className="bg-canvas"></div>
 
             <div className="hero-section">
-                <h1 className="hero-title">Maya: Your Personal AI Assistant</h1>
+                <h1 className="hero-title">Aurion: Your Personal AI Assistant</h1>
                 <p className="hero-subtitle">An intelligent, adaptive partner for managing tasks and memories with a human touch.</p>
                 <div className="hero-cta">
                     <button 
@@ -217,9 +217,9 @@ const Home = ({ setAuthModal }) => {
             </div>
 
             <section className="about-section">
-                <h2 className="section-title">About Maya</h2>
+                <h2 className="section-title">About Aurion</h2>
                 <p className="section-text">
-                    Maya is a cutting-edge personal AI assistant designed to understand you deeply. Powered by advanced AI technologies, Maya remembers your conversations, learns your preferences, and adapts to your unique style, making every interaction feel natural and personalized.
+                    Aurion is a cutting-edge personal AI assistant designed to understand you deeply. Powered by advanced AI technologies, Aurion remembers your conversations, learns your preferences, and adapts to your unique style, making every interaction feel natural and personalized.
                 </p>
                 <div className="feature-cards">
                     <div className="feature-card">
@@ -248,9 +248,9 @@ const Home = ({ setAuthModal }) => {
             </section>
 
             <section className="why-best-section">
-                <h2 className="section-title">Why Maya is the Best</h2>
+                <h2 className="section-title">Why Aurion is the Best</h2>
                 <p className="section-text">
-                    Maya stands out by combining a powerful language model (Google Gemini Pro) with a sophisticated memory system and knowledge graph. This allows Maya to understand relationships, learn over time, and deliver responses that feel uniquely tailored to you. Our real-time backend and intuitive interface ensure a seamless experience, whether you're managing tasks or having a casual chat.
+                    Aurion stands out by combining a powerful language model (Google Gemini Pro) with a sophisticated memory system and knowledge graph. This allows Aurion to understand relationships, learn over time, and deliver responses that feel uniquely tailored to you. Our real-time backend and intuitive interface ensure a seamless experience, whether you're managing tasks or having a casual chat.
                 </p>
             </section>
 
@@ -268,7 +268,7 @@ const Home = ({ setAuthModal }) => {
             </section>
 
             <footer className="footer">
-                <p>Built with ❤️ by the Maya Team</p>
+                <p>Built with ❤️ by the Aurion Team</p>
                 <p>Empowering you with AI that grows with you.</p>
                 <div className="footer-links">
                     <a href="https://x.ai" target="_blank" rel="noopener noreferrer">About xAI</a>
@@ -294,9 +294,9 @@ const AnimatedRoute = ({ children }) => {
     const prefersReduced = useReducedMotion();
     const direction = navigationType === 'POP' ? -1 : 1; // -1 back, 1 forward/replace
 
-    // Allow quick toggling without code edits: localStorage.setItem('maya-transition', 'sleek'|'minimal')
+    // Allow quick toggling without code edits: localStorage.setItem('aurion-transition', 'sleek'|'minimal')
     const [pref, setPref] = React.useState(() => {
-        try { return localStorage.getItem('maya-transition') || 'sleek'; } catch { return 'sleek'; }
+        try { return localStorage.getItem('aurion-transition') || 'sleek'; } catch { return 'sleek'; }
     });
     useEffect(() => {
         const onStorage = (e) => {

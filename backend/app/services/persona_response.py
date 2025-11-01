@@ -193,26 +193,29 @@ async def generate_response(
                 if len(chosen) < 140:
                     chosen = f"{chosen.split('!')[0].rstrip('.')} but I can feel a bit of {sec_label} there too — that’s totally okay."  # simple blend
 
-    # 4. Optionally blend with base AI text
+    # 4. Optionally blend with base AI text - prioritize base AI text for direct answers
     final: str
-    if base_ai_text and chosen:
-        # Simple blend heuristic: if base text is short (< 25 chars) or emotion intense, prefer template
-        if len(base_ai_text) < 25 or emotion_norm in {"sadness", "angry", "sad"}:
-            final = chosen
-        else:
-            # Merge: template sentence + space + base continuation (strip emoji duplication)
+    if base_ai_text:
+        # Always prefer base AI text - it answers the question directly
+        # Only use template as prefix for emotional support if needed
+        if emotion_norm in {"sadness", "angry", "sad", "anxious"} and len(chosen) < 50:
+            # Add brief emotional support prefix only for negative emotions
             final = f"{chosen} {base_ai_text}".strip()
+        else:
+            # For neutral/positive emotions, use base AI text directly
+            final = base_ai_text
     elif chosen:
         final = chosen
     else:
-        final = base_ai_text or "(I'm here)"
+        final = "(I'm here)"
 
-    # Escalation softening: append gentle invite if escalated and not already long
-    if escalation and len(final) < 180 and emotion_norm in {"sad", "angry", "anxious"}:
-        final = f"{final} I'm here with you—want to share a bit more?"
+    # Escalation softening: keep it short and sweet
+    if escalation and len(final) < 150 and emotion_norm in {"sad", "angry", "anxious"}:
+        final = f"{final} I'm here for you."
 
-    # 5. Controlled emoji enrichment (max 2 inserted by us)
-    final = _maybe_add_emoji(final, emotion_norm)
+    # 5. Minimal emoji enrichment (max 1 inserted by us, keep it subtle)
+    if len(final) < 200:  # Only add emoji for shorter responses
+        final = _maybe_add_emoji(final, emotion_norm)
 
     # 6. Persist to memory buffer (fire-and-forget)
     try:

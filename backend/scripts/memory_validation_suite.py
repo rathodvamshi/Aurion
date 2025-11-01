@@ -39,7 +39,7 @@ def register_and_login():
 
 def test_short_term():
     _print("Short-Term Memory (Redis)")
-    r = requests.post(f"{BASE}/api/chat/new", json={"message": "Hello Maya"}, headers=HEADERS)
+    r = requests.post(f"{BASE}/api/chat/new", json={"message": "Hello Aurion"}, headers=HEADERS)
     assert r.status_code == 200, r.text
     sid = r.json()["session_id"]
     # Provide a fact

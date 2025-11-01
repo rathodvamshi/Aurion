@@ -19,3 +19,10 @@ build/
 .idea/
 .vscode/
 
+# Local data/inspection dumps (may contain secrets)
+database_inspection_*.json
+*inspection_*.json
+redis_inspection_*.json
+neo4j_inspection_*.json
+pinecone_inspection_*.json
+

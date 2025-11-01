@@ -33,6 +33,7 @@ from app.services import metrics as _metrics
 import os, json
 from app.services.ai_service import get_response as ai_get_response
 from app.services import ai_service
+from app.services.response_shaper import format_structured_reply
 import re
 import httpx
 import os
@@ -1046,8 +1047,17 @@ async def handle_chat_message(
                 pass
     except Exception:
         pass
-    # 1. Intent Detection for Reminders with confirmation flow
-    if task_nlp.detect_task_intent(message):
+    # 1. Check if this is a search query FIRST (before reminder detection)
+    # Search queries should NOT be processed as reminders
+    is_search_query = False
+    try:
+        from app.services.realtime_search import should_use_search
+        is_search_query = should_use_search(message)
+    except Exception:
+        pass
+    
+    # 2. Intent Detection for Reminders (skip if it's a search query)
+    if not is_search_query and task_nlp.detect_task_intent(message):
         try:
             # Get user timezone from profile
             try:
@@ -1080,7 +1090,7 @@ async def handle_chat_message(
             logger.exception(f"Task flow handling failed: {e}")
             # Fall through to general conversation
 
-    # 2. Fallback to General Conversation
+    # 3. Fallback to General Conversation (includes search queries)
     # (The existing logic for handling general chat would go here)
     # For now, just echoing back for demonstration
     
@@ -1132,13 +1142,25 @@ async def handle_chat_message(
             "Let's try again in a moment."
         )
 
+    # Format response in ChatGPT-style with Markdown formatting
+    try:
+        formatted_response = format_structured_reply(
+            user_message=message,
+            main_text=ai_response_text,
+            profile=context.get("profile"),
+            add_emojis=True,
+        )
+    except Exception:
+        # Fallback to original response if formatting fails
+        formatted_response = ai_response_text
+
     asyncio.create_task(log_message(session_id, "user", message, chat_log_collection))
-    asyncio.create_task(log_message(session_id, "assistant", ai_response_text, chat_log_collection))
+    asyncio.create_task(log_message(session_id, "assistant", formatted_response, chat_log_collection))
 
     # Unified session history logging (memory_coordinator)
     try:
         from app.services.memory_coordinator import _append_history
-        await _append_history(session_id, message, ai_response_text)
+        await _append_history(session_id, message, formatted_response)
     except Exception as e:
         logger = logging.getLogger(__name__)
         logger.debug(f"Failed to append to session history (non-fatal): {e}")
@@ -1148,11 +1170,11 @@ async def handle_chat_message(
         user_key=current_user.get("email", user_id),
         session_id=session_id,
         user_message=message,
-        ai_message=ai_response_text,
+        ai_message=formatted_response,
         state="general_conversation",
     )
 
-    return ai_response_text
+    return formatted_response
 
 async def log_message(session_id: str, sender: str, text: str, collection: Collection):
     """Logs a message to the chat log collection."""
@@ -1242,11 +1264,15 @@ async def start_new_chat(
     except Exception:
         brain_future = None
 
-    # Try fast-path video handling first
+    # Try fast-path video handling first (guarded to avoid false positives for reminders)
     video_payload = None
     video_intent_meta = None
     try:
-        vi = await _maybe_handle_video_intent(req_message)
+        # Hard guard: if message implies a reminder, skip video path
+        if "remind me" in (req_message or "").lower():
+            vi = None
+        else:
+            vi = await _maybe_handle_video_intent(req_message)
         if vi and vi.get("handled"):
             asyncio.create_task(log_message(session_id, "user", req_message, chat_log))
             resp_txt = vi.get("response_text") or ""
@@ -1558,8 +1584,11 @@ async def continue_chat(
             asyncio.create_task(log_message(session_id, "assistant", ask, chat_log))
             return ContinueChatResponse(response_text=ask, video=None, video_intent=pending)
 
-        # No pending—try normal fast path
-        vi = await _maybe_handle_video_intent(request.message)
+        # No pending—try normal fast path (skip if reminder-like)
+        if "remind me" in (request.message or "").lower():
+            vi = None
+        else:
+            vi = await _maybe_handle_video_intent(request.message)
         if vi and vi.get("handled"):
             asyncio.create_task(log_message(session_id, "user", req_message, chat_log))
             asyncio.create_task(log_message(session_id, "assistant", vi.get("response_text") or "", chat_log))
@@ -1597,6 +1626,7 @@ async def continue_chat(
         request.message, user_id, session_id, current_user, sessions, tasks, chat_log
     )
     
+    # Response is already formatted by handle_chat_message, but ensure it's clean
     # Update session's updatedAt and last message info so it bubbles to top; increment count
     try:
         await run_in_threadpool(
@@ -1933,6 +1963,18 @@ async def continue_chat(
         )
     else:
         ai_response_text = fast_answer
+    
+    # Format response in ChatGPT-style
+    try:
+        ai_response_text = format_structured_reply(
+            user_message=request.message,
+            main_text=ai_response_text,
+            profile=profile,
+            add_emojis=True,
+        )
+    except Exception:
+        # Fallback if formatting fails
+        pass
 
     # Intent detection
     detected = _detect_intent_and_entities(request.message)
@@ -1953,7 +1995,11 @@ async def continue_chat(
     video_payload = None
     video_intent_meta = None
     try:
-        vi = await _maybe_handle_video_intent(request.message)
+        # Final attempt—guarded
+        if "remind me" in (request.message or "").lower():
+            vi = None
+        else:
+            vi = await _maybe_handle_video_intent(request.message)
         if vi and vi.get("handled"):
             ai_response_text = vi.get("response_text") or ai_response_text
             video_payload = vi.get("video")

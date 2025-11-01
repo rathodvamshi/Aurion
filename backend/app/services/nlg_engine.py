@@ -81,7 +81,8 @@ def _build_prompt(nlg_input: Dict[str, Any], personalization: Dict[str, Any]) ->
     # Compose a compact, robust prompt
     sys = (
         "You are a helpful, concise assistant. Use the plan and context to craft a friendly, clear reply. "
-        "Acknowledge prior progress and user preferences when useful. Avoid over-apologizing."
+        "NEVER reference past conversations, previous messages, or say 'Last time we discussed'. "
+        "Answer ONLY the current question directly. Do NOT mention context or history."
     )
     ctx_parts: List[str] = []
     if personalization.get("session_summary"):

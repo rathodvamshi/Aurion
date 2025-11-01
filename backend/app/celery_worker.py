@@ -29,6 +29,7 @@ from app.services.pinecone_service import upsert_memory_embedding
 from app.utils import email_utils
 from app import celery_tasks as _register_tasks  # ensure task module is imported/registered
 from app.utils.time_utils import format_ist
+from dateutil.rrule import rrulestr
 from app.logger import log_event
 try:
     from app.metrics import TASK_COMPLETION_TOTAL
@@ -339,45 +340,90 @@ def send_task_otp_task(self, task_id: str, user_email: str, title: str, otp: str
         logger.exception(f"[OTP_ERROR] sending email for task {task_id}: {exc}")
         raise self.retry(exc=exc)  # will retry with backoff
 
-    # 6) auto-complete AFTER successful send
-    if task.get("auto_complete_after_email", True):
-        coll.update_one(
-            {"_id": ObjectId(task_id)},
-            {"$set": {"status": "done", "completed_at": datetime.utcnow(), "updated_at": datetime.utcnow()}}
-        )
-        # Update user profile embedded task if present
-        try:
-            prof_col = db_client.get_user_profile_collection()
-            if prof_col and task.get("user_id"):
-                prof_col.update_one(
-                    {"_id": str(task.get("user_id"))},
-                    {"$set": {"tasks.$[t].status": "completed", "tasks.$[t].completed_at": datetime.utcnow()}},
-                    array_filters=[{"t.task_id": str(task_id)}],
-                    upsert=True,
-                )
-        except Exception:
-            pass
-
-        # Activity log: task_completed
-        try:
-            act = db_client.get_activity_logs_collection()
-            if act:
-                act.insert_one({
-                    "type": "task_completed",
-                    "task_id": str(task_id),
-                    "user_id": str(task.get("user_id")),
-                    "timestamp": datetime.utcnow(),
-                })
-        except Exception:
-            pass
-
-        log_event("task_auto_complete", user_id=str(task.get("user_id")), task_id=str(task_id), email=user_email)
-
-    # Remove global task after successful send
+    # 6) Recurrence handling or auto-complete for one-time tasks
     try:
-        coll.delete_one({"_id": ObjectId(task_id)})
+        recurrence_rule = task.get("recurrence_rule") or task.get("rrule")
+        is_recurring = bool(task.get("is_recurring")) or bool(recurrence_rule)
     except Exception:
-        pass
+        recurrence_rule = None
+        is_recurring = False
+
+    if is_recurring and recurrence_rule:
+        # Compute next run based on RRULE after now
+        try:
+            now_utc = datetime.utcnow().replace(tzinfo=None)
+            # Determine reference dtstart: use task.due_date or parsed due_iso
+            dtstart = None
+            if due_target:
+                dtstart = due_target.replace(tzinfo=None)
+            else:
+                due_field = task.get("due_date") if isinstance(task.get("due_date"), datetime) else None
+                if due_field:
+                    dtstart = due_field.replace(tzinfo=None)
+            if not dtstart:
+                dtstart = now_utc
+
+            r = rrulestr(str(recurrence_rule), dtstart=dtstart)
+            nxt = r.after(now_utc, inc=False)
+            if nxt is None:
+                # No further runs; mark as done
+                coll.update_one({"_id": ObjectId(task_id)}, {"$set": {"status": "done", "completed_at": datetime.utcnow(), "updated_at": datetime.utcnow()}})
+                log_event("recurring_finished", user_id=str(task.get("user_id")), task_id=str(task_id))
+            else:
+                # Update next_run and due_date and reschedule celery
+                coll.update_one(
+                    {"_id": ObjectId(task_id)},
+                    {"$set": {"due_date": nxt.replace(second=0, microsecond=0), "next_run_at": nxt.replace(second=0, microsecond=0), "updated_at": datetime.utcnow()}},
+                )
+                # schedule next occurrence
+                from app.celery_worker import send_task_otp_task as _send_task_otp_task
+                eta = nxt.replace(tzinfo=None)
+                _send_task_otp_task.apply_async(args=[task_id, user_email, title, None, nxt.isoformat()], eta=eta)
+                log_event("recurring_rescheduled", user_id=str(task.get("user_id")), task_id=str(task_id), next_iso=nxt.isoformat())
+        except Exception as exc:
+            logger.exception(f"[RECURRING] failed to compute next occurrence for {task_id}: {exc}")
+            # fallback: mark as done
+            coll.update_one({"_id": ObjectId(task_id)}, {"$set": {"status": "done", "completed_at": datetime.utcnow(), "updated_at": datetime.utcnow()}})
+    else:
+        # One-time: auto-complete (respect flag) and delete
+        if task.get("auto_complete_after_email", True):
+            coll.update_one(
+                {"_id": ObjectId(task_id)},
+                {"$set": {"status": "done", "completed_at": datetime.utcnow(), "updated_at": datetime.utcnow()}}
+            )
+            # Update user profile embedded task if present
+            try:
+                prof_col = db_client.get_user_profile_collection()
+                if prof_col and task.get("user_id"):
+                    prof_col.update_one(
+                        {"_id": str(task.get("user_id"))},
+                        {"$set": {"tasks.$[t].status": "completed", "tasks.$[t].completed_at": datetime.utcnow()}},
+                        array_filters=[{"t.task_id": str(task_id)}],
+                        upsert=True,
+                    )
+            except Exception:
+                pass
+
+            # Activity log: task_completed
+            try:
+                act = db_client.get_activity_logs_collection()
+                if act:
+                    act.insert_one({
+                        "type": "task_completed",
+                        "task_id": str(task_id),
+                        "user_id": str(task.get("user_id")),
+                        "timestamp": datetime.utcnow(),
+                    })
+            except Exception:
+                pass
+
+            log_event("task_auto_complete", user_id=str(task.get("user_id")), task_id=str(task_id), email=user_email)
+
+        # Remove one-time task
+        try:
+            coll.delete_one({"_id": ObjectId(task_id)})
+        except Exception:
+            pass
 
     # done
 

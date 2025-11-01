@@ -156,6 +156,13 @@ class Settings(BaseSettings):
     YOUTUBE_API_KEY: Optional[str] = None
     NEWS_API_KEY: Optional[str] = None
     WEATHER_API_KEY: Optional[str] = None
+    
+    # ==================================================
+    # 🔍 Real-Time Web Search APIs
+    # ==================================================
+    SERPAPI_KEY: Optional[str] = None
+    GOOGLE_API_KEY: Optional[str] = None  # Reuse for Custom Search API
+    GOOGLE_SEARCH_CX_ID: Optional[str] = None  # Custom Search Engine ID
 
     # ==================================================
     # 🕒 Timezone / Localization

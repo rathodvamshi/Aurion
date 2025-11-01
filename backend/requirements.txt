@@ -32,6 +32,12 @@ pytest-asyncio==0.23.8
 PyYAML
 prometheus-client
 bleach>=6.1.0
+# Web scraping for real-time search content
+newspaper3k>=0.2.9
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+# Optional: serpapi for real-time web search (alternative to Google Custom Search)
+# google-search-results>=2.4.2  # Uncomment if using SerpAPI
 
 # NOTE: Do not store secrets in this file.
 # Configure environment variables in backend/.env (not committed) or Docker env_file.

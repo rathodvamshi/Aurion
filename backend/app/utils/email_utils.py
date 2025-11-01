@@ -1,93 +1,100 @@
+
 def send_welcome_email(to_email: str) -> None:
-        subject = "Welcome to Project Maya!"
+        subject = "Welcome to Project Aurion!"
         body = (
-                "Thank you for registering with Project Maya.\n\n"
+                "Thank you for registering with Project Aurion.\n\n"
                 "Your account is now active. Enjoy exploring our features!"
         )
         html_body = f"""
         <html>
             <body>
-                <h2>Welcome to Project Maya!</h2>
+                <h2>Welcome to Project Aurion!</h2>
                 <p>Thank you for registering. Your account is now active.</p>
                 <p>Enjoy exploring our features!</p>
             </body>
         </html>
         """
         send_email(to_email, subject, body, html=html_body)
-import smtplib
-import ssl
+import os
+import requests
 import logging
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from typing import Optional
-from app.config import settings
-import time
+
+logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
 
 class EmailSendError(Exception):
     pass
 
 
-def send_email(
-    recipient: str,
-    subject: str,
-    body: str,
-    html: Optional[str] = None,
-    max_retries: int = 3,
-    retry_delay: int = 5,
-    trace_id: Optional[str] = None,
-) -> None:
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = settings.MAIL_FROM
-    msg["To"] = recipient
-
-    msg.attach(MIMEText(body, "plain"))
-    if html:
-        msg.attach(MIMEText(html, "html"))
-
-    attempt = 0
-    while attempt < max_retries:
-        try:
-            if settings.MAIL_SSL_TLS:
-                context = ssl.create_default_context()
-                with smtplib.SMTP_SSL(settings.MAIL_SERVER, settings.MAIL_PORT, context=context) as server:
-                    server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-                    server.send_message(msg)
-            else:
-                with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=15) as server:
-                    if settings.MAIL_STARTTLS:
-                        context = ssl.create_default_context()
-                        server.starttls(context=context)
-                    server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-                    server.send_message(msg)
-            logger.info(f"[EmailSend] status=success recipient={recipient} subject='{subject}' attempt={attempt+1} trace={trace_id or '-'}")
-            return
-        except (smtplib.SMTPException, ssl.SSLError) as e:
-            attempt += 1
-            logger.warning(f"[EmailSend] status=retry recipient={recipient} attempt={attempt} error='{e}' trace={trace_id or '-'}")
-            time.sleep(retry_delay)
-    logger.error(f"[EmailSend] status=failed recipient={recipient} subject='{subject}' attempts={max_retries} trace={trace_id or '-'}")
-    raise EmailSendError(f"Failed to send email to {recipient} after {max_retries} attempts.")
+def send_email(recipient: str, subject: str, html_content: str) -> bool:
+    url = "https://api.brevo.com/v3/smtp/email"
+    api_key = os.getenv("BREVO_API_KEY")
+    headers = {
+        "accept": "application/json",
+        "Api-Key": api_key,  # Brevo expects 'Api-Key' (case-sensitive)
+        "content-type": "application/json"
+    }
+    payload = {
+        "sender": {"name": "Project Aurion", "email": "rathodvamshi369@gmail.com"},
+        "to": [{"email": recipient}],
+        "subject": subject,
+        "htmlContent": html_content
+    }
+    response = requests.post(url, json=payload, headers=headers)
+    if response.status_code == 201:
+        logger.info(f"[EmailSend] success -> {recipient}")
+        return True
+    else:
+        logger.error(f"[EmailSend] failed -> {recipient} | {response.text}")
+        return False
 
 
-def send_otp_email(to_email: str, otp_code: str) -> None:
-    subject = "Your Verification Code"
-    body = (
-        f"Your OTP is: {otp_code}\n\n"
-        "It will expire in 5 minutes. Ignore if you didn't request it."
-    )
-    html_body = f"""
-    <html>
-      <body>
-        <p>Your OTP is: <strong>{otp_code}</strong></p>
-        <p>This code will expire in 5 minutes. If you didn't request this, you can ignore it.</p>
-      </body>
-    </html>
-    """
-    send_email(to_email, subject, body, html=html_body)
+def send_otp_email(to_email: str, otp_code: str) -> bool:
+        subject = "Your One-Time Password (OTP) for Project Aurion"
+        html_body = f"""
+        <html>
+            <body style='font-family: Arial, sans-serif; background: #f7f7f9; margin:0; padding:0;'>
+                <table width="100%" bgcolor="#f7f7f9" cellpadding="0" cellspacing="0" style="padding: 40px 0;">
+                    <tr>
+                        <td align="center">
+                            <table width="420" bgcolor="#fff" cellpadding="0" cellspacing="0" style="border-radius: 8px; box-shadow:0 2px 8px #e0e0e0; padding: 32px 24px;">
+                                <tr>
+                                    <td align="center" style="padding-bottom: 16px;">
+                                        <img src="https://i.imgur.com/2yaf2wb.png" alt="Project Aurion" width="48" style="margin-bottom: 8px;"/>
+                                        <h2 style="margin: 0; color: #2d3748; font-size: 1.6em;">Project Aurion</h2>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center" style="padding-bottom: 24px;">
+                                        <div style="font-size: 1.1em; color: #444;">Your One-Time Password (OTP) is:</div>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center" style="padding-bottom: 24px;">
+                                        <div style="font-size: 2.4em; letter-spacing: 6px; font-weight: bold; color: #2563eb; background: #f1f5fb; border-radius: 8px; padding: 16px 0; width: 220px; margin: 0 auto;">{otp_code}</div>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center" style="padding-bottom: 8px;">
+                                        <div style="font-size: 1em; color: #666;">This code will expire in 5 minutes.</div>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center" style="padding-bottom: 0;">
+                                        <div style="font-size: 0.95em; color: #999;">If you did not request this, you can safely ignore this email.</div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </body>
+        </html>
+        """
+        return send_email(to_email, subject, html_body)
 
 
 def send_html_email(to: list, subject: str, html: str, text: str = None) -> None:
